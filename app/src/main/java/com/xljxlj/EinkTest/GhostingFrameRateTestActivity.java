@@ -1,12 +1,14 @@
 package com.xljxlj.EinkTest;
 
 import android.app.Activity;
+import android.content.Context;  // 添加这个import
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.AttributeSet;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -22,7 +24,6 @@ public class GhostingFrameRateTestActivity extends Activity {
     private static final int ROWS = 10;
     private static final int COLS = 10;
     private static final int TOTAL_BLOCKS = ROWS * COLS;
-    private static final int PATTERN_SIZE = 6; // 6x6像素的图案
 
     private LinearLayout mainLayout;
     private LinearLayout gridContainer;
@@ -36,10 +37,6 @@ public class GhostingFrameRateTestActivity extends Activity {
     private boolean testRunning = false;
     private boolean testCompleted = false;
     private int screenType = 0; // 0:黑白屏幕, 1:滤光片彩色屏幕
-
-    // 添加图案位图
-    private Bitmap patternBitmap;
-    private android.graphics.drawable.BitmapDrawable patternDrawable;
 
     private static final String TAG = "GhostingFrameRateTest";
 
@@ -150,51 +147,11 @@ public class GhostingFrameRateTestActivity extends Activity {
     }
 
     private void startMainTest() {
-        // 创建图案位图
-        createPatternBitmap();
         createUI();
         initializeUI();
         initializeGrid();
         // 打开界面时自动开始测试
         startTest();
-    }
-
-    private void createPatternBitmap() {
-        // 创建一个较小的图案（比如16x16），然后通过平铺来显示
-        int patternWidth = 16;  // 图案的宽度
-        int patternHeight = 16; // 图案的高度
-
-        patternBitmap = Bitmap.createBitmap(patternWidth, patternHeight, Bitmap.Config.RGB_565);
-        Canvas canvas = new Canvas(patternBitmap);
-
-        // 创建Paint对象
-        android.graphics.Paint blackPaint = new android.graphics.Paint();
-        blackPaint.setColor(android.graphics.Color.BLACK);
-        blackPaint.setStyle(android.graphics.Paint.Style.FILL);
-
-        android.graphics.Paint whitePaint = new android.graphics.Paint();
-        whitePaint.setColor(android.graphics.Color.WHITE);
-        whitePaint.setStyle(android.graphics.Paint.Style.FILL);
-
-        if (screenType == 0) {
-            // 黑白屏幕模式：创建竖线图像
-            // 先用白色填充整个位图
-            canvas.drawRect(0, 0, patternWidth, patternHeight, whitePaint);
-
-            // 按照2x2分组，在左上角位置绘制黑色像素
-            for (int y = 0; y < patternHeight; y += 1) {
-                for (int x = 0; x < patternWidth; x += 2) {
-                    // 在左上角位置绘制黑色像素
-                    canvas.drawRect(x, y, x + 1, y + 1, blackPaint);
-                }
-            }
-        } else {
-            // 彩色屏幕模式：使用纯蓝色填充
-            android.graphics.Paint bluePaint = new android.graphics.Paint();
-            bluePaint.setColor(Color.BLUE);
-            bluePaint.setStyle(android.graphics.Paint.Style.FILL);
-            canvas.drawRect(0, 0, patternWidth, patternHeight, bluePaint);
-        }
     }
 
     private void setFullScreenImmersive() {
@@ -343,14 +300,41 @@ public class GhostingFrameRateTestActivity extends Activity {
         // 清除容器
         gridContainer.removeAllViews();
 
-        // 创建可平铺的Drawable
-        patternDrawable = new android.graphics.drawable.BitmapDrawable(getResources(), patternBitmap);
-        patternDrawable.setTileModeXY(
-                android.graphics.Shader.TileMode.REPEAT,
-                android.graphics.Shader.TileMode.REPEAT
-        );
+        // 先获取屏幕信息
+        WindowManager windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        android.view.Display display = windowManager.getDefaultDisplay();
+        android.graphics.Point size = new android.graphics.Point();
+        display.getSize(size);
 
-        // 创建10x10网格
+        // 计算每个格子的大小（基于屏幕宽度）
+        int screenWidth = size.x;
+        int screenHeight = size.y;
+
+        // 预留空间给按钮和提示文本（大约200像素）
+        int availableHeight = screenHeight - 200;
+        int cellWidth = (screenWidth - (COLS + 1) * 1) / COLS;
+        int cellHeight = (availableHeight - (ROWS + 1) * 1) / ROWS;
+
+        Log.d(TAG, "Screen: " + screenWidth + "x" + screenHeight +
+                ", Cell: " + cellWidth + "x" + cellHeight);
+
+        // 确保最小尺寸
+        if (cellWidth < 10) cellWidth = 10;
+        if (cellHeight < 10) cellHeight = 10;
+
+        // 创建共享图案
+        Bitmap sharedPatternBitmap = null;
+        if (screenType == 0) {
+            sharedPatternBitmap = createDiagonalPatternBitmap(cellWidth, cellHeight);
+        }
+
+        // 计算字体大小
+        float textSizeByHeight = cellHeight * 2.0f / 3.0f;
+        float textSizeByWidth = cellWidth * 1.0f / 2.0f;
+        float finalTextSize = Math.min(textSizeByHeight, textSizeByWidth);
+        float scaledTextSize = finalTextSize / getResources().getDisplayMetrics().scaledDensity;
+
+        // 创建网格
         for (int i = 0; i < ROWS; i++) {
             LinearLayout rowLayout = new LinearLayout(this);
             rowLayout.setOrientation(LinearLayout.HORIZONTAL);
@@ -363,56 +347,82 @@ public class GhostingFrameRateTestActivity extends Activity {
             rowLayout.setBackgroundColor(Color.WHITE);
 
             for (int j = 0; j < COLS; j++) {
-                final TextView blockText = new TextView(this);
+                TextView blockText = new TextView(this);
                 int blockNumber = i * COLS + j + 1;
 
+                // 关键：使用固定尺寸而不是权重
                 LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                        0,
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        1.0f
+                        cellWidth,
+                        cellHeight
                 );
                 params.setMargins(1, 1, 1, 1);
+                // 居中显示
+                params.gravity = Gravity.CENTER;
 
                 blockText.setLayoutParams(params);
                 blockText.setText(String.valueOf(blockNumber));
 
                 // 设置背景
-                if (screenType == 0) {
-                    // 黑白屏幕：使用平铺的竖线图案
-                    blockText.setBackground(patternDrawable);
-                } else {
-                    // 彩色屏幕：使用纯蓝色背景
+                if (screenType == 0 && sharedPatternBitmap != null) {
+                    android.graphics.drawable.BitmapDrawable drawable =
+                            new android.graphics.drawable.BitmapDrawable(getResources(), sharedPatternBitmap);
+                    drawable.setTargetDensity(getResources().getDisplayMetrics().densityDpi);
+                    blockText.setBackground(drawable);
+                } else if (screenType == 1) {
                     blockText.setBackgroundColor(Color.BLUE);
                 }
 
                 // 初始设置为透明（不可见）
                 blockText.setTextColor(Color.TRANSPARENT);
                 blockText.setGravity(Gravity.CENTER);
-
-                // 添加布局完成监听器来计算合适的字体大小
-                blockText.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        int blockHeight = blockText.getHeight();
-                        int blockWidth = blockText.getWidth();
-                        if (blockHeight > 0 && blockWidth > 0) {
-                            // 计算字体大小：方块高度的2/3和方块宽度的1/2的最小值
-                            float textSizeByHeight = blockHeight * 2.0f / 3.0f;
-                            float textSizeByWidth = blockWidth * 1.0f / 2.0f;
-                            float finalTextSize = Math.min(textSizeByHeight, textSizeByWidth);
-
-                            // 设置字体大小（转换为sp单位）
-                            float scaledTextSize = finalTextSize / getResources().getDisplayMetrics().scaledDensity;
-                            blockText.setTextSize(scaledTextSize);
-                        }
-                    }
-                });
+                blockText.setTextAlignment(TextView.TEXT_ALIGNMENT_CENTER);
+                blockText.setTextSize(scaledTextSize);
 
                 blockTexts[i][j] = blockText;
                 rowLayout.addView(blockText);
             }
 
             gridContainer.addView(rowLayout);
+        }
+    }
+
+    private Bitmap createDiagonalPatternBitmap(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+
+        try {
+            // 创建与格子大小完全相同的位图
+            Bitmap patternBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(patternBitmap);
+
+            // 绘制白色背景
+            canvas.drawColor(Color.WHITE);
+
+            // 创建黑色画笔
+            android.graphics.Paint blackPaint = new android.graphics.Paint();
+            blackPaint.setColor(Color.BLACK);
+            blackPaint.setStyle(android.graphics.Paint.Style.FILL);
+            blackPaint.setAntiAlias(false);
+            blackPaint.setFilterBitmap(false);
+
+            // 绘制斜线图案
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    if ((x + y) % 2 == 0) {
+                        canvas.drawRect(x, y, x + 1, y + 1, blackPaint);
+                    }
+                }
+            }
+
+            return patternBitmap;
+
+        } catch (OutOfMemoryError e) {
+            Log.e(TAG, "Out of memory creating pattern bitmap: " + width + "x" + height);
+            return null;
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating pattern bitmap: " + e.getMessage());
+            return null;
         }
     }
 
@@ -612,8 +622,5 @@ public class GhostingFrameRateTestActivity extends Activity {
         testRunning = false;
         stopTest();
         handler.removeCallbacksAndMessages(null);
-        if (patternBitmap != null && !patternBitmap.isRecycled()) {
-            patternBitmap.recycle();
-        }
     }
 }
